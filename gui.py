@@ -1,4 +1,3 @@
-# gui.py
 import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -18,6 +17,15 @@ class ImageCropperApp:
         self.tk_img = None
         self.cropped_img = None
         self.live_preview = False
+        self.crop_box_rect = None
+        self.zoom_level = 1.0
+        self.canvas_img_id = None
+
+        self.zoom_level = 1.0
+        self.canvas_img_id = None
+        self.pan_x = 0
+        self.pan_y = 0
+        self.drag_start = None
 
         self.setup_widgets()
 
@@ -31,8 +39,14 @@ class ImageCropperApp:
         self.image_label.pack()
 
         self.canvas = tk.Canvas(left, width=400, height=400, bg="gray")
-        self.canvas.pack(pady=(10, 0), fill="none", expand=False)
+        self.canvas.pack(pady=(10, 0))
         self.canvas.bind("<Button-1>", self.on_canvas_click)
+        self.canvas.bind("<MouseWheel>", self.on_zoom)
+        self.canvas.bind("<Button-4>", self.on_zoom)
+        self.canvas.bind("<Button-5>", self.on_zoom)
+        self.canvas.bind("<ButtonPress-3>", self.start_pan)
+        self.canvas.bind("<B3-Motion>", self.do_pan)
+        self.canvas.focus_set()
 
         # ─── RIGHT PANEL ─────────────────────────────────
         right_wrapper = tk.Frame(self.root)
@@ -72,6 +86,22 @@ class ImageCropperApp:
 
         tk.Button(right, text="Save Cropped Image", command=self.save_cropped).pack(pady=10)
 
+        self.canvas.bind("<ButtonPress-1>", self.start_live_preview)
+        self.canvas.bind("<ButtonRelease-1>", self.stop_live_preview)
+        self.canvas.bind("<Motion>", self.on_mouse_move)
+
+    def on_zoom(self, event):
+        if event.delta > 0 or event.num == 4:
+            self.zoom_level *= 1.1
+        elif event.delta < 0 or event.num == 5:
+            self.zoom_level /= 1.1
+
+        min_zoom_x = 400 / self.img.width
+        min_zoom_y = 400 / self.img.height
+        min_zoom = max(min_zoom_x, min_zoom_y)
+        self.zoom_level = max(min_zoom, min(self.zoom_level, 5.0))
+        self.display_image()
+
     def select_image_file(self):
         path = filedialog.askopenfilename(
             filetypes=[("Image Files", "*.png *.jpg *.jpeg")]
@@ -84,24 +114,46 @@ class ImageCropperApp:
         self.display_image()
 
     def display_image(self):
-        resized = self.img.resize((400, 400), Image.Resampling.LANCZOS)
-        self.tk_img = ImageTk.PhotoImage(resized)
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor="nw", image=self.tk_img)
+        if self.img is None:
+            return
 
-    def on_canvas_click(self, event):
+        zoom = self.zoom_level
+        box_size = 400
+        img_w, img_h = self.img.size
+
+        zoomed_w = int(img_w * zoom)
+        zoomed_h = int(img_h * zoom)
+        zoomed = self.img.resize((zoomed_w, zoomed_h), Image.Resampling.LANCZOS)
+
+        max_x = max(0, zoomed_w - box_size)
+        max_y = max(0, zoomed_h - box_size)
+        self.pan_x = max(0, min(self.pan_x, max_x))
+        self.pan_y = max(0, min(self.pan_y, max_y))
+
+        cropped = zoomed.crop((
+            self.pan_x,
+            self.pan_y,
+            self.pan_x + box_size,
+            self.pan_y + box_size
+        ))
+
+        self.tk_img = ImageTk.PhotoImage(cropped)
+
+        self.canvas.delete("all")
+        self.canvas_img_id = self.canvas.create_image(0, 0, anchor="nw", image=self.tk_img)
+
+    def preview_at_coords(self, canvas_x, canvas_y):
         if self.img is None:
             return
 
         box_size = self.slider.get()
-        x_ratio = self.img.width / 400
-        y_ratio = self.img.height / 400
-        click_x = int(event.x * x_ratio)
-        click_y = int(event.y * y_ratio)
+        zoom = self.zoom_level
 
-        self.cropped_img = crop_image(self.img, click_x, click_y, box_size)
+        img_x = int((self.pan_x + canvas_x) / zoom)
+        img_y = int((self.pan_y + canvas_y) / zoom)
+
+        self.cropped_img = crop_image(self.img, img_x, img_y, box_size)
         if not self.cropped_img:
-            messagebox.showerror("Error", "Crop area out of bounds!")
             return
 
         preview_pixel = self.cropped_img.resize((100, 100), Image.Resampling.NEAREST)
@@ -112,15 +164,54 @@ class ImageCropperApp:
 
         self.preview_canvas_pixel.delete("all")
         self.preview_canvas_pixel.create_image(0, 0, anchor="nw", image=self.preview_tk_pixel)
-
         self.preview_canvas_smooth.delete("all")
         self.preview_canvas_smooth.create_image(0, 0, anchor="nw", image=self.preview_tk_smooth)
+
+        canvas_box_size = box_size * self.zoom_level
+        half = canvas_box_size / 2
+        x0, y0 = canvas_x - half, canvas_y - half
+        x1, y1 = canvas_x + half, canvas_y + half
+
+        if self.crop_box_rect:
+            self.canvas.delete(self.crop_box_rect)
+
+        self.crop_box_rect = self.canvas.create_rectangle(x0, y0, x1, y1, outline="red", width=1)
+
+    def on_canvas_click(self, event):
+        self.preview_at_coords(event.x, event.y)
+
+    def start_pan(self, event):
+        self.drag_start = (event.x, event.y)
+
+    def do_pan(self, event):
+        if self.drag_start is None:
+            return
+
+        dx = event.x - self.drag_start[0]
+        dy = event.y - self.drag_start[1]
+
+        self.pan_x -= dx
+        self.pan_y -= dy
+        self.drag_start = (event.x, event.y)
+
+        self.display_image()
 
     def select_dir(self):
         dir_ = filedialog.askdirectory()
         if not dir_:
             return
         self.dir_label.config(text=dir_)
+
+    def start_live_preview(self, event):
+        self.live_preview = True
+        self.preview_at_coords(event.x, event.y)
+
+    def stop_live_preview(self, event):
+        self.live_preview = False
+
+    def on_mouse_move(self, event):
+        if self.live_preview:
+            self.preview_at_coords(event.x, event.y)
 
     def save_cropped(self):
         if self.cropped_img is None:
