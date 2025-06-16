@@ -26,6 +26,12 @@ class ImageCropperApp:
         self.pan_x = 0
         self.pan_y = 0
         self.drag_start = None
+        self.space_pressed = False
+        self.left_dragging = False
+
+        self.coord_label = None
+        self.original_filename = ""
+        self.zoom_cache = {}
 
         self.setup_widgets()
 
@@ -60,8 +66,6 @@ class ImageCropperApp:
         bottom_spacer.pack(fill="both", expand=True)
 
         tk.Label(right, text="Preview: Raw (Left) vs AA (Right)").pack()
-
-
         preview_frame = tk.Frame(right)
         preview_frame.pack(pady=(0, 10))
 
@@ -72,12 +76,19 @@ class ImageCropperApp:
         self.preview_canvas_smooth.pack(side="left", padx=5)
 
 
-        self.slider = tk.Scale(right, from_=2, to=50, resolution=2, orient="horizontal", label="Crop Box Size")
+
+        self.slider = tk.Scale(right, from_=8, to=96, resolution=8, orient="horizontal")
         self.slider.set(20)
-        self.slider.pack(pady=(10, 10))
+        self.slider.pack(pady=(0, 0))
+        tk.Label(right, text="Crop Box Size").pack(pady=(0,10))
+
+        tk.Label(right, text="Box Coordinates:").pack(pady=(8, 0))
+        self.coord_label = tk.Label(right, text="(x, y)", font=("Courier", 10))
+        self.coord_label.pack(pady=(0, 20))
 
         tk.Label(right, text="Save As Filename:").pack()
         self.filename_entry = tk.Entry(right)
+        self.filename_entry.insert(0, "filename")
         self.filename_entry.pack()
 
         tk.Button(right, text="Choose Save Directory", command=self.select_dir).pack(pady=(10,0))
@@ -86,9 +97,11 @@ class ImageCropperApp:
 
         tk.Button(right, text="Save Cropped Image", command=self.save_cropped).pack(pady=10)
 
-        self.canvas.bind("<ButtonPress-1>", self.start_live_preview)
-        self.canvas.bind("<ButtonRelease-1>", self.stop_live_preview)
+        self.canvas.bind("<ButtonPress-1>", self.on_left_click)
+        self.canvas.bind("<ButtonRelease-1>", self.on_left_release)
         self.canvas.bind("<Motion>", self.on_mouse_move)
+        self.canvas.bind("<KeyPress-space>", self.on_space_down)
+        self.canvas.bind("<KeyRelease-space>", self.on_space_up)
 
     def on_zoom(self, event):
         if event.delta > 0 or event.num == 4:
@@ -111,6 +124,8 @@ class ImageCropperApp:
         self.image_path = path
         self.image_label.config(text=path)
         self.img = load_image(path)
+        self.zoom_cache.clear()
+        self.original_filename = os.path.basename(path)
         self.display_image()
 
     def display_image(self):
@@ -123,7 +138,11 @@ class ImageCropperApp:
 
         zoomed_w = int(img_w * zoom)
         zoomed_h = int(img_h * zoom)
-        zoomed = self.img.resize((zoomed_w, zoomed_h), Image.Resampling.LANCZOS)
+        if zoom not in self.zoom_cache:
+            zoomed = self.img.resize((zoomed_w, zoomed_h), Image.Resampling.LANCZOS)
+            self.zoom_cache[zoom] = zoomed
+        else:
+            zoomed = self.zoom_cache[zoom]
 
         max_x = max(0, zoomed_w - box_size)
         max_y = max(0, zoomed_h - box_size)
@@ -151,6 +170,14 @@ class ImageCropperApp:
 
         img_x = int((self.pan_x + canvas_x) / zoom)
         img_y = int((self.pan_y + canvas_y) / zoom)
+
+        self.coord_label.config(text=f"({img_x}, {img_y})")
+
+        # Update default filename
+        basename = os.path.splitext(self.original_filename)[0]
+        auto_name = f"{img_x}_{img_y}_{basename}"
+        self.filename_entry.delete(0, tk.END)
+        self.filename_entry.insert(0, auto_name)
 
         self.cropped_img = crop_image(self.img, img_x, img_y, box_size)
         if not self.cropped_img:
@@ -196,6 +223,26 @@ class ImageCropperApp:
 
         self.display_image()
 
+    def on_space_down(self, event):
+        self.space_pressed = True
+
+    def on_space_up(self, event):
+        self.space_pressed = False
+
+    def on_left_click(self, event):
+        self.left_dragging = True
+        if self.space_pressed:
+            self.start_pan(event)
+        else:
+            self.start_live_preview(event)
+
+    def on_left_release(self, event):
+        self.left_dragging = False
+        if self.space_pressed:
+            self.drag_start = None  # stop pan
+        else:
+            self.stop_live_preview(event)
+
     def select_dir(self):
         dir_ = filedialog.askdirectory()
         if not dir_:
@@ -210,7 +257,9 @@ class ImageCropperApp:
         self.live_preview = False
 
     def on_mouse_move(self, event):
-        if self.live_preview:
+        if self.space_pressed and self.left_dragging:
+            self.do_pan(event)
+        elif self.live_preview:
             self.preview_at_coords(event.x, event.y)
 
     def save_cropped(self):
