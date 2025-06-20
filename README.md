@@ -16,7 +16,7 @@ The app opens a GUI window with two panels. The usage is as follows:
 3. **Box Size**: Use the slider to set the crop box size.
 4. **Crop**: Hold left-click on the parent image to preview the crop in real-time. Let go to lock in the preview. A thin rectangle shows where the preview is being taken from.
 5. **Preview**: A raw-pixels preview and an antialiased preview are displayed.
-6. **Save Cropped Image**: Enter the filename (extension not needed) and choose a save directory. Click *Save Cropped Image*. A `.png` is saved. The default name follows `x_y_filename.png` where `(x, y)` are the box coordinates.
+6. **Save Cropped Image**: Enter the filename (extension not needed) and choose a save directory. Click *Save Cropped Image*. A `.png` is saved. The default name follows `filename_x_y.png` where `(x, y)` are the box coordinates.
 
 ### Optional: Building from Source (if needed)
 Requires Python + pip + `pyinstaller`. To build a fresh `.exe`:

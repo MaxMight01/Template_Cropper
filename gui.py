@@ -175,7 +175,7 @@ class ImageCropperApp:
 
         # Update default filename
         basename = os.path.splitext(self.original_filename)[0]
-        auto_name = f"{img_x}_{img_y}_{basename}"
+        auto_name = f"{basename}_{img_x}_{img_y}"
         self.filename_entry.delete(0, tk.END)
         self.filename_entry.insert(0, auto_name)
 
